@@ -55,16 +55,6 @@ def get_archipelago_root():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def get_newest_zip_time(output_dir):
-    """Get the modification time of the newest ZIP file in the output directory."""
-    if not os.path.isdir(output_dir):
-        return 0
-    zips = glob.glob(os.path.join(output_dir, "*.zip"))
-    if not zips:
-        return 0
-    return max(os.path.getmtime(f) for f in zips)
-
-
 def get_newest_zip_name(output_dir, since_time):
     """Get the name of any ZIP file modified after since_time."""
     if not os.path.isdir(output_dir):

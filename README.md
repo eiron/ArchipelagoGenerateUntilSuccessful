@@ -4,9 +4,9 @@ An Archipelago tool that repeatedly runs `ArchipelagoGenerate.exe` until a multi
 
 ## How It Works
 
-1. Counts existing ZIP files in the `output` directory
+1. Notes the newest ZIP file in the `output` directory
 2. Runs `ArchipelagoGenerate.exe`
-3. Checks if a new ZIP file appeared in `output`
+3. Checks if a newer ZIP file exists in `output` than before
 4. If not, retries automatically until successful (or stopped by user)
 
 ## Installation
