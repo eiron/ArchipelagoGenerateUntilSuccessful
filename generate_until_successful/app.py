@@ -67,7 +67,9 @@ class GenerateApp(App):
         self.should_stop = False
         self.current_process = None
         self.latest_line = ""
-        self.attempt = 0
+        self.total_runs = 0
+        self.successful_runs = 0
+        self.failed_runs = 0
         self.log_lines = []
         self.success_zip_path = None
 
@@ -75,7 +77,7 @@ class GenerateApp(App):
         self.title = "Generate Until Successful"
         root = BoxLayout(orientation="vertical", padding=10, spacing=10)
 
-        # Status - attempt number
+        # Status - current run number
         self.status_label = Label(
             text="Ready to generate",
             size_hint_y=None,
@@ -114,15 +116,15 @@ class GenerateApp(App):
         seed_layout.add_widget(self.seed_input)
         root.add_widget(seed_layout)
 
-        # Max retries input
-        retries_layout = BoxLayout(size_hint_y=None, height=40, spacing=10)
-        retries_layout.add_widget(Label(
-            text="Max Retries:",
+        # Successful run target input
+        success_goal_layout = BoxLayout(size_hint_y=None, height=40, spacing=10)
+        success_goal_layout.add_widget(Label(
+            text="Target Successes:",
             size_hint_x=None,
-            width=100,
+            width=120,
             font_size="14sp",
         ))
-        self.max_retries_input = TextInput(
+        self.success_goal_input = TextInput(
             hint_text="0 = unlimited",
             multiline=False,
             font_size="14sp",
@@ -130,13 +132,32 @@ class GenerateApp(App):
             height=36,
             input_filter="int",
         )
-        retries_layout.add_widget(self.max_retries_input)
-        root.add_widget(retries_layout)
+        success_goal_layout.add_widget(self.success_goal_input)
+        root.add_widget(success_goal_layout)
+
+        # Max failures input
+        failures_layout = BoxLayout(size_hint_y=None, height=40, spacing=10)
+        failures_layout.add_widget(Label(
+            text="Max Failures:",
+            size_hint_x=None,
+            width=100,
+            font_size="14sp",
+        ))
+        self.max_failures_input = TextInput(
+            hint_text="0 = unlimited",
+            multiline=False,
+            font_size="14sp",
+            size_hint_y=None,
+            height=36,
+            input_filter="int",
+        )
+        failures_layout.add_widget(self.max_failures_input)
+        root.add_widget(failures_layout)
 
         # Log area - key events only
         scroll = ScrollView(size_hint=(1, 1))
         self.log_label = Label(
-            text="Press Start to begin generation attempts.\n",
+            text="Press Start to begin generation runs.\n",
             size_hint_y=None,
             font_size="13sp",
             halign="left",
@@ -229,14 +250,18 @@ class GenerateApp(App):
     def _generation_loop(self):
         self.is_running = True
         self.should_stop = False
-        self.attempt = 0
+        self.total_runs = 0
+        self.successful_runs = 0
+        self.failed_runs = 0
 
         self._add_log(f"Archipelago: {self.archipelago_root}")
         self._add_log("")
 
         seed = self.seed_input.text.strip()
-        retries_text = self.max_retries_input.text.strip()
-        max_attempts = int(retries_text) if retries_text else 0  # 0 means unlimited
+        failures_text = self.max_failures_input.text.strip()
+        success_goal_text = self.success_goal_input.text.strip()
+        max_failures = int(failures_text) if failures_text else 0  # 0 means unlimited
+        success_goal = int(success_goal_text) if success_goal_text else 0  # 0 means unlimited
 
         if not self.generate_exe or not os.path.isfile(self.generate_exe):
             self._add_log(f"ERROR: Cannot find ArchipelagoGenerate in {self.archipelago_root}")
@@ -247,20 +272,15 @@ class GenerateApp(App):
 
         if seed:
             self._add_log(f"Seed: {seed}")
-        if max_attempts:
-            self._add_log(f"Max attempts: {max_attempts}")
+        if max_failures:
+            self._add_log(f"Max failures before aborting: {max_failures}")
+        if success_goal:
+            self._add_log(f"Target successful runs: {success_goal}")
         self._add_log("")
 
         while not self.should_stop:
-            self.attempt += 1
-
-            if max_attempts and self.attempt > max_attempts:
-                self._add_log("")
-                self._add_log(f"Failed after {max_attempts} attempt(s).")
-                Clock.schedule_once(lambda dt: setattr(self.status_label, "text", "Failed - max retries reached"))
-                break
-
-            self._add_log(f"Attempt {self.attempt}...")
+            self.total_runs += 1
+            self._add_log(f"Run {self.total_runs}...")
 
             try:
                 popen_kwargs = {
@@ -345,15 +365,43 @@ class GenerateApp(App):
 
             # The generator itself reports success by logging the archive path.
             if self.success_zip_path:
+                self.successful_runs += 1
                 new_file = os.path.basename(self.success_zip_path)
                 self._add_log("")
-                self._add_log(f"SUCCESS! Generated after {self.attempt} attempt(s).")
+                self._add_log(f"SUCCESS! Generated on run {self.total_runs}.")
                 self._add_log(f"  {new_file}")
-                Clock.schedule_once(lambda dt, a=self.attempt: setattr(self.status_label, "text", f"SUCCESS after {a} attempt(s)!"))
+                if success_goal:
+                    self._add_log(f"  Successful runs: {self.successful_runs}/{success_goal}")
+                if success_goal and self.successful_runs >= success_goal:
+                    Clock.schedule_once(
+                        lambda dt, s=self.successful_runs, g=success_goal: setattr(
+                            self.status_label,
+                            "text",
+                            f"SUCCESS: {s}/{g} run(s) complete!",
+                        )
+                    )
+                    self.latest_line = ""
+                    break
+                Clock.schedule_once(
+                    lambda dt, s=self.successful_runs, r=self.total_runs: setattr(
+                        self.status_label,
+                        "text",
+                        f"SUCCESS: {s} run(s) complete after {r} total run(s)",
+                    )
+                )
                 self.latest_line = ""
-                break
+                continue
             else:
-                self._add_log(f"  Failed. Retrying...")
+                self.failed_runs += 1
+                if max_failures:
+                    self._add_log(f"  Failed. Failures: {self.failed_runs}/{max_failures}")
+                else:
+                    self._add_log(f"  Failed. Failures: {self.failed_runs}")
+                if max_failures and self.failed_runs >= max_failures:
+                    self._add_log("")
+                    self._add_log(f"Aborted after {self.failed_runs} failed run(s) and {self.total_runs} total run(s).")
+                    Clock.schedule_once(lambda dt: setattr(self.status_label, "text", "Failed - max failures reached"))
+                    break
 
         if self.should_stop:
             self._add_log("")
@@ -369,9 +417,12 @@ class GenerateApp(App):
         self.stop_btn.disabled = True
 
     def update_ui(self, dt):
-        # Update attempt counter in status
-        if self.is_running and self.attempt > 0:
-            self.status_label.text = f"Attempt {self.attempt}..."
+        # Update run counters in status while the loop is still active
+        if self.is_running and self.total_runs > 0:
+            self.status_label.text = (
+                f"Run {self.total_runs} | Successes {self.successful_runs} | "
+                f"Failures {self.failed_runs}"
+            )
 
         # Update the activity line
         self.activity_label.text = self.latest_line
@@ -389,4 +440,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
