@@ -1,12 +1,11 @@
 """
 Generate Until Successful - Kivy GUI application.
-Repeatedly runs ArchipelagoGenerate until a new ZIP appears in output/.
+Repeatedly runs ArchipelagoGenerate until it reports a successfully generated output.
 """
 
 import os
 import sys
 import subprocess
-import glob
 import threading
 import time
 import platform
@@ -20,6 +19,9 @@ from kivy.clock import Clock
 
 IS_WINDOWS = sys.platform in ("win32", "cygwin", "msys")
 IS_MACOS = sys.platform == "darwin"
+
+# Line the generator logs (to both stdout and its log file) right before writing the output zip.
+SUCCESS_MARKER = "Creating final archive at "
 
 
 def get_generate_executable(root):
@@ -55,16 +57,6 @@ def get_archipelago_root():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def get_newest_zip_name(output_dir, since_time):
-    """Get the name of any ZIP file modified after since_time."""
-    if not os.path.isdir(output_dir):
-        return None
-    for f in glob.glob(os.path.join(output_dir, "*.zip")):
-        if os.path.getmtime(f) > since_time:
-            return os.path.basename(f)
-    return None
-
-
 class GenerateApp(App):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -77,6 +69,7 @@ class GenerateApp(App):
         self.latest_line = ""
         self.attempt = 0
         self.log_lines = []
+        self.success_zip_path = None
 
     def build(self):
         self.title = "Generate Until Successful"
@@ -238,11 +231,7 @@ class GenerateApp(App):
         self.should_stop = False
         self.attempt = 0
 
-        zip_count = len(glob.glob(os.path.join(self.output_dir, "*.zip"))) if os.path.isdir(self.output_dir) else 0
-        timestamp_before = time.time()
-
         self._add_log(f"Archipelago: {self.archipelago_root}")
-        self._add_log(f"ZIP files in output: {zip_count}")
         self._add_log("")
 
         seed = self.seed_input.text.strip()
@@ -304,6 +293,7 @@ class GenerateApp(App):
 
                 # Read stderr in background
                 memory_error_detected = False
+                self.success_zip_path = None
 
                 def read_stderr(proc):
                     nonlocal memory_error_detected
@@ -313,6 +303,8 @@ class GenerateApp(App):
                                 self.latest_line = f"[{time.strftime('%H:%M:%S')}] {line.rstrip()}"
                                 if "MemoryError" in line:
                                     memory_error_detected = True
+                                if SUCCESS_MARKER in line:
+                                    self.success_zip_path = line.split(SUCCESS_MARKER, 1)[1].strip()
                     except Exception:
                         pass
 
@@ -330,6 +322,8 @@ class GenerateApp(App):
                         break
                     if line.strip():
                         self.latest_line = f"[{time.strftime('%H:%M:%S')}] {line.rstrip()}"
+                        if SUCCESS_MARKER in line:
+                            self.success_zip_path = line.split(SUCCESS_MARKER, 1)[1].strip()
 
                 self.current_process.wait()
                 stderr_thread.join(timeout=5)
@@ -349,10 +343,9 @@ class GenerateApp(App):
                 Clock.schedule_once(lambda dt: setattr(self.status_label, "text", "Failed - MemoryError"))
                 break
 
-            # Check for new or modified ZIP files since we started
-            new_file = get_newest_zip_name(self.output_dir, timestamp_before)
-
-            if new_file:
+            # The generator itself reports success by logging the archive path.
+            if self.success_zip_path:
+                new_file = os.path.basename(self.success_zip_path)
                 self._add_log("")
                 self._add_log(f"SUCCESS! Generated after {self.attempt} attempt(s).")
                 self._add_log(f"  {new_file}")
